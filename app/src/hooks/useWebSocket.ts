@@ -16,6 +16,28 @@ interface UseWebSocketReturn {
   disconnect: () => void;
 }
 
+function formatWsUrl(rawUrl?: string): string | null {
+  if (!rawUrl) return null;
+  let url = rawUrl.trim();
+  if (!url) return null;
+
+  if (url.startsWith('https://')) {
+    url = url.replace('https://', 'wss://');
+  } else if (url.startsWith('http://')) {
+    url = url.replace('http://', 'ws://');
+  } else if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+    const isLocal = url.includes('localhost') || url.includes('127.0.0.1');
+    url = `${isLocal ? 'ws' : 'wss'}://${url}`;
+  }
+
+  if (!url.endsWith('/ws')) {
+    url = url.replace(/\/+$/, '');
+    url = `${url}/ws`;
+  }
+
+  return url;
+}
+
 export function useWebSocket({ onMessage }: UseWebSocketOptions): UseWebSocketReturn {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -27,6 +49,12 @@ export function useWebSocket({ onMessage }: UseWebSocketOptions): UseWebSocketRe
   onMessageRef.current = onMessage;
 
   const getWsUrl = useCallback((): string => {
+    const envUrl = (import.meta.env.SERVER_URL as string | undefined) || (import.meta.env.VITE_SERVER_URL as string | undefined);
+    const formatted = formatWsUrl(envUrl);
+    if (formatted) {
+      return formatted;
+    }
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     if (import.meta.env.DEV) {
       return `${protocol}//${window.location.host}/ws`;

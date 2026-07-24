@@ -307,6 +307,25 @@ cd app
 # Instale as dependências
 npm install
 
+# (Opcional) Copie o exemplo de variáveis de ambiente
+cp .env.example .env
+```
+
+#### ⚙️ Configuração do Servidor Backend (`.env`)
+
+No arquivo `app/.env`, você pode definir a URL do servidor backend via `SERVER_URL`:
+
+```env
+# Exemplo para backend em produção (Render, Fly.io, etc.):
+SERVER_URL=https://eight-pool-uai.onrender.com
+
+# Exemplo para backend em desenvolvimento local:
+SERVER_URL=http://localhost:8080
+```
+
+> **Nota:** O frontend converte automaticamente esquemas `http://` / `https://` em `ws://` / `wss://` e adiciona a rota `/ws` se necessário. Se a variável `SERVER_URL` for omitida, em desenvolvimento local o Vite redireciona as requisições `/ws` para `127.0.0.1:8080`.
+
+```bash
 # Inicie o servidor de desenvolvimento
 npm run dev
 ```
@@ -345,6 +364,8 @@ O frontend estará acessível em `http://localhost:5173`.
     │   ├── types.ts           # Definições de tipos TypeScript
     │   ├── App.tsx            # Componente raiz
     │   └── main.tsx           # Ponto de entrada do React
+    ├── .env                   # Configuração local (SERVER_URL)
+    ├── .env.example           # Modelo de variáveis de ambiente
     ├── index.html
     ├── package.json
     └── vite.config.ts
