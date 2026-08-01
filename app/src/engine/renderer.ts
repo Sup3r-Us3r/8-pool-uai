@@ -2,7 +2,7 @@
 // Canvas 2D Renderer — High-fidelity pool table rendering
 // ============================================================
 
-import type { SimBall } from './physics';
+import type { SimBall, AimTrajectoryResult } from './physics';
 import {
   TABLE_WIDTH,
   TABLE_HEIGHT,
@@ -21,7 +21,6 @@ import {
   POCKET_COLOR,
   CUE_COLOR,
   CUE_TIP_COLOR,
-  AIM_LINE_COLOR,
 } from './constants';
 
 /**
@@ -304,49 +303,132 @@ export function drawCue(
 
   ctx.restore();
 }
-
 /**
- * Draw the aim line from the cue ball in the shot direction.
+ * Draw the authentic 8-Ball Pool geometric aim trajectory system.
  */
 export function drawAimLine(
   ctx: CanvasRenderingContext2D,
   cueBall: SimBall,
   _angle: number,
-  endpoint: { x: number; y: number },
-  hitBallId: number | null
+  aim: AimTrajectoryResult
 ): void {
   if (cueBall.pocketed) return;
 
   const cx = RAIL_WIDTH + cueBall.x;
   const cy = RAIL_WIDTH + cueBall.y;
-  const ex = RAIL_WIDTH + endpoint.x;
-  const ey = RAIL_WIDTH + endpoint.y;
+  const ex = RAIL_WIDTH + aim.endpoint.x;
+  const ey = RAIL_WIDTH + aim.endpoint.y;
 
   ctx.save();
-  ctx.strokeStyle = AIM_LINE_COLOR;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([8, 6]);
 
+  // 1. Primary Aim Ray (Cue ball -> Ghost ball or Wall)
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([7, 5]);
   ctx.beginPath();
   ctx.moveTo(cx, cy);
   ctx.lineTo(ex, ey);
   ctx.stroke();
-
   ctx.setLineDash([]);
 
-  // Ghost ball at endpoint
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(ex, ey, BALL_RADIUS, 0, Math.PI * 2);
-  ctx.stroke();
+  // 2. Ghost Ball at impact point
+  if (aim.ghostBall) {
+    const gx = RAIL_WIDTH + aim.ghostBall.x;
+    const gy = RAIL_WIDTH + aim.ghostBall.y;
 
-  // If hitting a ball, show projected direction
-  if (hitBallId !== null) {
-    ctx.fillStyle = 'rgba(255,100,100,0.4)';
+    // Outer glow
+    ctx.shadowColor = '#38BDF8';
+    ctx.shadowBlur = 8;
+
+    // Ghost ball body
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
     ctx.beginPath();
-    ctx.arc(ex, ey, 4, 0, Math.PI * 2);
+    ctx.arc(gx, gy, BALL_RADIUS, 0, Math.PI * 2);
     ctx.fill();
+
+    // Ghost ball rim
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(gx, gy, BALL_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Center dot
+    ctx.fillStyle = '#38BDF8';
+    ctx.beginPath();
+    ctx.arc(gx, gy, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+  }
+
+  // 3. Target Ball Trajectory Line
+  if (aim.targetTrajectory) {
+    const tsx = RAIL_WIDTH + aim.targetTrajectory.start.x;
+    const tsy = RAIL_WIDTH + aim.targetTrajectory.start.y;
+    const tex = RAIL_WIDTH + aim.targetTrajectory.end.x;
+    const tey = RAIL_WIDTH + aim.targetTrajectory.end.y;
+
+    // Solid projection line
+    ctx.strokeStyle = '#38BDF8';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(tsx, tsy);
+    ctx.lineTo(tex, tey);
+    ctx.stroke();
+
+    // Arrowhead at the end of target line
+    const dir = aim.targetTrajectory.dir;
+    const arrowLen = 10;
+    const angle = Math.atan2(dir.y, dir.x);
+
+    ctx.fillStyle = '#38BDF8';
+    ctx.beginPath();
+    ctx.moveTo(tex, tey);
+    ctx.lineTo(
+      tex - arrowLen * Math.cos(angle - Math.PI / 6),
+      tey - arrowLen * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.lineTo(
+      tex - arrowLen * Math.cos(angle + Math.PI / 6),
+      tey - arrowLen * Math.sin(angle + Math.PI / 6)
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 4. Cue Ball Tangent Deflection Line
+  if (aim.cueDeflection) {
+    const csx = RAIL_WIDTH + aim.cueDeflection.start.x;
+    const csy = RAIL_WIDTH + aim.cueDeflection.start.y;
+    const cex = RAIL_WIDTH + aim.cueDeflection.end.x;
+    const cey = RAIL_WIDTH + aim.cueDeflection.end.y;
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(csx, csy);
+    ctx.lineTo(cex, cey);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 5. Cushion Reflection Line (if ray hits cushion without hitting ball)
+  if (aim.cushionReflection) {
+    const rsx = RAIL_WIDTH + aim.cushionReflection.start.x;
+    const rsy = RAIL_WIDTH + aim.cushionReflection.start.y;
+    const rex = RAIL_WIDTH + aim.cushionReflection.end.x;
+    const rey = RAIL_WIDTH + aim.cushionReflection.end.y;
+
+    ctx.strokeStyle = 'rgba(255, 215, 0, 0.75)';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(rsx, rsy);
+    ctx.lineTo(rex, rey);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   ctx.restore();

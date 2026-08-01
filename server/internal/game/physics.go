@@ -197,15 +197,24 @@ func SimulateShot(balls []Ball, angle, power float64) SimulationResult {
 				if simBalls[i].Pocketed {
 					continue
 				}
-				if isBallInPocket(simBalls[i].Position) {
-					simBalls[i].Pocketed = true
-					simBalls[i].Velocity = Vec2{0, 0}
-					if !pocketedMap[simBalls[i].ID] {
-						pocketedMap[simBalls[i].ID] = true
-						result.PocketedBalls = append(result.PocketedBalls, simBalls[i].ID)
-						if simBalls[i].ID == 0 {
-							result.CueBallPocketed = true
+				for _, p := range PocketPositions {
+					diff := p.Sub(simBalls[i].Position)
+					dist := diff.Length()
+					if dist < PocketRadius {
+						simBalls[i].Pocketed = true
+						simBalls[i].Velocity = Vec2{0, 0}
+						if !pocketedMap[simBalls[i].ID] {
+							pocketedMap[simBalls[i].ID] = true
+							result.PocketedBalls = append(result.PocketedBalls, simBalls[i].ID)
+							if simBalls[i].ID == 0 {
+								result.CueBallPocketed = true
+							}
 						}
+						break
+					} else if dist < PocketRadius*1.35 {
+						// Funnel ball towards pocket center
+						dir := diff.Normalize()
+						simBalls[i].Velocity = simBalls[i].Velocity.Add(dir.Scale(0.3))
 					}
 				}
 			}

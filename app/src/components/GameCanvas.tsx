@@ -1,5 +1,5 @@
 // ============================================================
-// GameCanvas — Canvas 2D pool table with full interactivity
+// GameCanvas — Canvas 2D pool table with 8-Ball Pool controls & geometric aim
 // ============================================================
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -46,6 +46,7 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
   const [isDragging, setIsDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const angleRef = useRef(0);
+  const initialAngleRef = useRef(0);
   const frameIdRef = useRef(0);
   const lastShotTimestampRef = useRef<number>(0);
 
@@ -53,13 +54,12 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
   const isMyTurn = gameState.activePlayerId === myId;
   const ballInHand = gameState.ballInHand && isMyTurn;
 
-  // Handle SHOT_STARTED event from server (fired for BOTH players synchronously)
+  // Handle SHOT_STARTED event from server
   useEffect(() => {
     if (gameState.lastShotStart && gameState.lastShotStart.timestamp > lastShotTimestampRef.current) {
       lastShotTimestampRef.current = gameState.lastShotStart.timestamp;
       const { angle, power: shotPower } = gameState.lastShotStart;
 
-      // Start local physics animation for all clients
       animatingRef.current = true;
       applyShot(simBallsRef.current, angle, shotPower);
     }
@@ -71,22 +71,46 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
       const newSim = toSimBalls(gameState.balls);
       pendingSyncRef.current = newSim;
 
-      // If not animating, apply state immediately
       if (!animatingRef.current) {
         simBallsRef.current = newSim;
       }
     }
   }, [gameState.balls]);
 
-  // Calculate angle from cue ball to mouse
+  // Helper to compute absolute angular distance in [0, PI]
+  const getAngleDiff = (a1: number, a2: number) => {
+    let diff = a1 - a2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    return Math.abs(diff);
+  };
+
+  // Calculate angle from cue ball to mouse, allowing dynamic angle adjustment during drag
   const getAngle = useCallback(() => {
     const cueBall = simBallsRef.current.find((b) => b.id === 0);
-    if (!cueBall || cueBall.pocketed) return 0;
+    if (!cueBall || cueBall.pocketed) return angleRef.current;
 
     const cx = RAIL_WIDTH + cueBall.x;
     const cy = RAIL_WIDTH + cueBall.y;
-    return Math.atan2(mouseRef.current.y - cy, mouseRef.current.x - cx);
-  }, []);
+    const dx = mouseRef.current.x - cx;
+    const dy = mouseRef.current.y - cy;
+
+    if (Math.hypot(dx, dy) < 2) return angleRef.current;
+
+    let angle = Math.atan2(dy, dx);
+
+    if (isDragging) {
+      // If mouse position relative to cue ball is opposite to initial aim direction (>90 deg diff),
+      // adjust angle by 180 deg so pulling back doesn't invert the shot trajectory
+      if (getAngleDiff(angle, initialAngleRef.current) > Math.PI / 2) {
+        angle += Math.PI;
+      }
+    }
+
+    while (angle > Math.PI) angle -= Math.PI * 2;
+    while (angle < -Math.PI) angle += Math.PI * 2;
+    return angle;
+  }, [isDragging]);
 
   // Mouse move handler
   const handleMouseMove = useCallback(
@@ -101,18 +125,33 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
         y: (e.clientY - rect.top) * scaleY,
       };
 
-      if (isDragging && isMyTurn && !animatingRef.current && !ballInHand) {
-        // Calculate power based on drag distance
-        const dx = mouseRef.current.x - dragStartRef.current.x;
-        const dy = mouseRef.current.y - dragStartRef.current.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const newPower = Math.min(dist / 200, 1);
-        setPower(newPower);
-      }
+      if (isMyTurn && !animatingRef.current && !ballInHand) {
+        angleRef.current = getAngle();
 
-      angleRef.current = getAngle();
+        if (isDragging) {
+          // Power calculation from drag distance
+          const dx = mouseRef.current.x - dragStartRef.current.x;
+          const dy = mouseRef.current.y - dragStartRef.current.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const newPower = Math.min(dist / 220, 1);
+          setPower(newPower);
+        }
+      }
     },
     [isDragging, isMyTurn, ballInHand, getAngle]
+  );
+
+  // Mouse wheel handler for precision micro-aiming
+  const handleWheel = useCallback(
+    (e: React.WheelEvent<HTMLCanvasElement>) => {
+      if (!isMyTurn || animatingRef.current || ballInHand) return;
+      // Adjust angle in small steps
+      const delta = Math.sign(e.deltaY) * 0.005;
+      angleRef.current += delta;
+      if (angleRef.current > Math.PI) angleRef.current -= Math.PI * 2;
+      if (angleRef.current < -Math.PI) angleRef.current += Math.PI * 2;
+    },
+    [isMyTurn, ballInHand]
   );
 
   // Mouse down handler
@@ -129,7 +168,6 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
       const my = (e.clientY - rect.top) * scaleY;
 
       if (ballInHand) {
-        // Place cue ball
         const tableX = mx - RAIL_WIDTH;
         const tableY = my - RAIL_WIDTH;
 
@@ -139,7 +177,6 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
           tableY >= BALL_RADIUS &&
           tableY <= TABLE_HEIGHT - BALL_RADIUS
         ) {
-          // Check no overlap
           const isValid = simBallsRef.current.every((b) => {
             if (b.id === 0 || b.pocketed) return true;
             const dx = tableX - b.x;
@@ -149,7 +186,6 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
 
           if (isValid) {
             onPlaceCueBall(tableX, tableY);
-            // Optimistic local update
             const cue = simBallsRef.current.find((b) => b.id === 0);
             if (cue) {
               cue.x = tableX;
@@ -161,9 +197,9 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
         return;
       }
 
-      // Start drag for shot
       setIsDragging(true);
       dragStartRef.current = { x: mx, y: my };
+      initialAngleRef.current = angleRef.current;
       setPower(0);
     },
     [isMyTurn, ballInHand, onPlaceCueBall]
@@ -199,14 +235,12 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
         const stillMoving = physicsStep(simBallsRef.current);
         if (!stillMoving) {
           animatingRef.current = false;
-          // Apply pending server sync once physics stops smoothly
           if (pendingSyncRef.current) {
             simBallsRef.current = pendingSyncRef.current;
           }
         }
       }
 
-      // Clear and draw
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // Table
@@ -217,13 +251,13 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
         drawBall(ctx, ball);
       }
 
-      // Interaction elements (only when it's my turn and not animating)
+      // Interactivity (my turn and not animating)
       if (isMyTurn && !animatingRef.current && !ballInHand) {
         const cueBall = simBallsRef.current.find((b) => b.id === 0);
         if (cueBall && !cueBall.pocketed) {
-          // Aim line
+          // Geometric 8-Ball Pool aim line
           const aim = getAimTrajectory(cueBall, angleRef.current, simBallsRef.current);
-          drawAimLine(ctx, cueBall, angleRef.current, aim.endpoint, aim.hitBallId);
+          drawAimLine(ctx, cueBall, angleRef.current, aim);
 
           // Cue stick
           drawCue(ctx, cueBall, angleRef.current, power);
@@ -270,21 +304,12 @@ export function GameCanvas({ gameState, roomInfo, onShoot, onPlaceCueBall }: Gam
         height={CANVAS_HEIGHT}
         className="game-canvas"
         onMouseMove={handleMouseMove}
+        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        style={{ cursor: ballInHand ? 'crosshair' : isMyTurn && !animatingRef.current ? 'none' : 'default' }}
+        style={{ cursor: ballInHand ? 'crosshair' : isMyTurn && !animatingRef.current ? 'crosshair' : 'default' }}
       />
-      {!isMyTurn && !animatingRef.current && gameState.phase === 'playing' && (
-        <div className="canvas-overlay">
-          <span>Vez do adversário...</span>
-        </div>
-      )}
-      {!isMyTurn && animatingRef.current && (
-        <div className="canvas-overlay animating">
-          <span>Jogada em andamento...</span>
-        </div>
-      )}
     </div>
   );
 }

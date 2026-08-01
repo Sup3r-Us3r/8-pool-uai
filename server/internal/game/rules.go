@@ -151,33 +151,13 @@ func EvaluateShot(
 
 	// --- Break shot special rules ---
 	if isBreakShot {
-		// On break, no foul for hitting any ball first
-		// Assign groups if a ball was pocketed
-		if len(sim.PocketedBalls) > 0 {
-			for _, pid := range sim.PocketedBalls {
-				if !IsCueBall(pid) && !IsEightBall(pid) {
-					if IsSolid(pid) {
-						if activePlayerID == 1 {
-							result.Player1Group = GroupSolids
-							result.Player2Group = GroupStripes
-						} else {
-							result.Player1Group = GroupStripes
-							result.Player2Group = GroupSolids
-						}
-					} else {
-						if activePlayerID == 1 {
-							result.Player1Group = GroupStripes
-							result.Player2Group = GroupSolids
-						} else {
-							result.Player1Group = GroupSolids
-							result.Player2Group = GroupStripes
-						}
-					}
-					result.GroupAssigned = true
-					break
-				}
+		// On break, no foul for hitting any ball first (except cue ball scratch handled above)
+		// Table remains open on break, but player keeps turn if any solid/stripe is pocketed
+		for _, pid := range sim.PocketedBalls {
+			if !IsCueBall(pid) && !IsEightBall(pid) {
+				result.PlayerKeepsTurn = true
+				break
 			}
-			result.PlayerKeepsTurn = true
 		}
 		return result
 	}
@@ -194,6 +174,13 @@ func EvaluateShot(
 				return result
 			}
 		} else if !BelongsToGroup(sim.FirstBallHitID, activeGroup) {
+			result.Foul = true
+			result.FoulReason = FoulWrongBallFirst
+			return result
+		}
+	} else {
+		// Open table: hitting 8-ball first is a foul
+		if IsEightBall(sim.FirstBallHitID) {
 			result.Foul = true
 			result.FoulReason = FoulWrongBallFirst
 			return result

@@ -239,50 +239,159 @@ function resolveWallCollision(b: SimBall): void {
   }
 }
 
+export interface AimTrajectoryResult {
+  endpoint: Vec2;
+  ghostBall: Vec2 | null;
+  hitBall: SimBall | null;
+  targetTrajectory: { start: Vec2; end: Vec2; dir: Vec2 } | null;
+  cueDeflection: { start: Vec2; end: Vec2; dir: Vec2 } | null;
+  cushionReflection: { start: Vec2; end: Vec2 } | null;
+}
+
 /**
- * Get the projected trajectory of the cue ball — returns the first collision point.
+ * High-precision 8 Ball Pool Aim Trajectory Engine.
+ * Calculates exact ghost ball impact point, target ball trajectory, cue ball tangent deflection, and cushion bounce.
  */
 export function getAimTrajectory(
   cueBall: SimBall,
   angle: number,
-  balls: SimBall[],
-  maxDist: number = 600
-): { endpoint: Vec2; hitBallId: number | null; reflectAngle: number | null } {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
+  balls: SimBall[]
+): AimTrajectoryResult {
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
 
-  const step = 2;
-  let x = cueBall.x;
-  let y = cueBall.y;
+  let closestDist = Infinity;
+  let closestBall: SimBall | null = null;
+  let ghostPos: Vec2 | null = null;
 
-  for (let d = 0; d < maxDist; d += step) {
-    x += dx * step;
-    y += dy * step;
+  const cuePos = { x: cueBall.x, y: cueBall.y };
 
-    // Check ball collision
-    for (const b of balls) {
-      if (b.id === 0 || b.pocketed) continue;
-      const bx = b.x - x;
-      const by = b.y - y;
-      if (Math.sqrt(bx * bx + by * by) < BALL_DIAMETER) {
-        return {
-          endpoint: { x, y },
-          hitBallId: b.id,
-          reflectAngle: Math.atan2(by, bx),
+  // 1. Ray-Circle intersection with all active object balls
+  for (const b of balls) {
+    if (b.id === 0 || b.pocketed) continue;
+
+    const vx = b.x - cuePos.x;
+    const vy = b.y - cuePos.y;
+
+    const proj = vx * dirX + vy * dirY;
+    if (proj <= 0) continue;
+
+    const perpSq = vx * vx + vy * vy - proj * proj;
+    const hitRadiusSq = BALL_DIAMETER * BALL_DIAMETER;
+
+    if (perpSq < hitRadiusSq) {
+      const dHit = proj - Math.sqrt(hitRadiusSq - perpSq);
+      if (dHit > 0 && dHit < closestDist) {
+        closestDist = dHit;
+        closestBall = b;
+        ghostPos = {
+          x: cuePos.x + dirX * dHit,
+          y: cuePos.y + dirY * dHit,
         };
       }
     }
+  }
 
-    // Check wall collision
-    if (
-      x - BALL_RADIUS < 0 ||
-      x + BALL_RADIUS > TABLE_WIDTH ||
-      y - BALL_RADIUS < 0 ||
-      y + BALL_RADIUS > TABLE_HEIGHT
-    ) {
-      return { endpoint: { x, y }, hitBallId: null, reflectAngle: null };
+  // 2. Check cushion collision distance
+  let wallDist = Infinity;
+  let wallHitPos: Vec2 | null = null;
+  let wallNormal: Vec2 = { x: 0, y: 0 };
+
+  if (dirX > 0) {
+    const d = (TABLE_WIDTH - BALL_RADIUS - cuePos.x) / dirX;
+    if (d < wallDist) {
+      wallDist = d;
+      wallHitPos = { x: TABLE_WIDTH - BALL_RADIUS, y: cuePos.y + dirY * d };
+      wallNormal = { x: -1, y: 0 };
+    }
+  } else if (dirX < 0) {
+    const d = (BALL_RADIUS - cuePos.x) / dirX;
+    if (d < wallDist) {
+      wallDist = d;
+      wallHitPos = { x: BALL_RADIUS, y: cuePos.y + dirY * d };
+      wallNormal = { x: 1, y: 0 };
     }
   }
 
-  return { endpoint: { x, y }, hitBallId: null, reflectAngle: null };
+  if (dirY > 0) {
+    const d = (TABLE_HEIGHT - BALL_RADIUS - cuePos.y) / dirY;
+    if (d < wallDist) {
+      wallDist = d;
+      wallHitPos = { x: cuePos.x + dirX * d, y: TABLE_HEIGHT - BALL_RADIUS };
+      wallNormal = { x: 0, y: -1 };
+    }
+  } else if (dirY < 0) {
+    const d = (BALL_RADIUS - cuePos.y) / dirY;
+    if (d < wallDist) {
+      wallDist = d;
+      wallHitPos = { x: cuePos.x + dirX * d, y: BALL_RADIUS };
+      wallNormal = { x: 0, y: 1 };
+    }
+  }
+
+  // 3. Build trajectory result
+  if (closestBall && ghostPos && closestDist < wallDist) {
+    const targetStart = { x: closestBall.x, y: closestBall.y };
+    const tdx = closestBall.x - ghostPos.x;
+    const tdy = closestBall.y - ghostPos.y;
+    const tlen = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+    const targetDir = { x: tdx / tlen, y: tdy / tlen };
+
+    const targetLineLength = 240;
+    const targetEnd = {
+      x: targetStart.x + targetDir.x * targetLineLength,
+      y: targetStart.y + targetDir.y * targetLineLength,
+    };
+
+    const dot = dirX * targetDir.x + dirY * targetDir.y;
+    const cdx = dirX - dot * targetDir.x;
+    const cdy = dirY - dot * targetDir.y;
+    const clen = Math.sqrt(cdx * cdx + cdy * cdy) || 1;
+    const cueDir = { x: cdx / clen, y: cdy / clen };
+
+    const cueLineLength = 120;
+    const cueEnd = {
+      x: ghostPos.x + cueDir.x * cueLineLength,
+      y: ghostPos.y + cueDir.y * cueLineLength,
+    };
+
+    return {
+      endpoint: ghostPos,
+      ghostBall: ghostPos,
+      hitBall: closestBall,
+      targetTrajectory: { start: targetStart, end: targetEnd, dir: targetDir },
+      cueDeflection: { start: ghostPos, end: cueEnd, dir: cueDir },
+      cushionReflection: null,
+    };
+  }
+
+  if (wallHitPos) {
+    const dotN = dirX * wallNormal.x + dirY * wallNormal.y;
+    const rx = dirX - 2 * dotN * wallNormal.x;
+    const ry = dirY - 2 * dotN * wallNormal.y;
+    const refLen = 180;
+    const refEnd = {
+      x: wallHitPos.x + rx * refLen,
+      y: wallHitPos.y + ry * refLen,
+    };
+
+    return {
+      endpoint: wallHitPos,
+      ghostBall: null,
+      hitBall: null,
+      targetTrajectory: null,
+      cueDeflection: null,
+      cushionReflection: { start: wallHitPos, end: refEnd },
+    };
+  }
+
+  const defaultEnd = { x: cuePos.x + dirX * 600, y: cuePos.y + dirY * 600 };
+  return {
+    endpoint: defaultEnd,
+    ghostBall: null,
+    hitBall: null,
+    targetTrajectory: null,
+    cueDeflection: null,
+    cushionReflection: null,
+  };
 }
